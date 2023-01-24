@@ -1,5 +1,4 @@
 /.vscode
-build*
 .buildutils
 autom4te.cache
 config.*
@@ -13,3 +12,5 @@ missing
 Makefile.in
 .DS_Store
 *~
+/*/env
+/*/build
