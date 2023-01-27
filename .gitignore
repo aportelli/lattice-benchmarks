@@ -14,3 +14,4 @@ Makefile.in
 *~
 /*/env
 /*/build
+/Grid/json.hpp
