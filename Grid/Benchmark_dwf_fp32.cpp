@@ -1,6 +1,7 @@
 /*
 Copyright © 2015 Peter Boyle <paboyle@ph.ed.ac.uk>
 Copyright © 2022 Antonin Portelli <antonin.portelli@me.com>
+Copyright © 2023 Simon Bürger <simon.buerger@rwth-aachen.de>
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -16,6 +17,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "json.hpp"
 #include <Grid/Grid.h>
 #ifdef GRID_CUDA
 #define CUDA_PROFILE
@@ -44,26 +46,41 @@ int main(int argc, char **argv)
 
   Coordinate latt4 = GridDefaultLatt();
   int Ls = 16;
+  std::string json_filename = ""; // empty indicates no json output
+  nlohmann::json json;
+
+  // benchmark specific command line arguments
   for (int i = 0; i < argc; i++)
+  {
     if (std::string(argv[i]) == "-Ls")
     {
       std::stringstream ss(argv[i + 1]);
       ss >> Ls;
     }
+    if (std::string(argv[i]) == "--json-out")
+      json_filename = argv[i + 1];
+  }
 
   GridLogLayout();
 
   long unsigned int single_site_flops = 8 * Nc * (7 + 16 * Nc);
 
+  json["single_site_flops"] = single_site_flops;
+
   GridCartesian *UGrid = SpaceTimeGrid::makeFourDimGrid(
       GridDefaultLatt(), GridDefaultSimd(Nd, vComplexF::Nsimd()), GridDefaultMpi());
   GridRedBlackCartesian *UrbGrid = SpaceTimeGrid::makeFourDimRedBlackGrid(UGrid);
+
   GridCartesian *FGrid = SpaceTimeGrid::makeFiveDimGrid(Ls, UGrid);
   GridRedBlackCartesian *FrbGrid = SpaceTimeGrid::makeFiveDimRedBlackGrid(Ls, UGrid);
+
+  json["grid"] = FGrid->FullDimensions().toVector();
+  json["local_grid"] = FGrid->LocalDimensions().toVector();
 
   std::cout << GridLogMessage << "Making s innermost grids" << std::endl;
   GridCartesian *sUGrid =
       SpaceTimeGrid::makeFourDimDWFGrid(GridDefaultLatt(), GridDefaultMpi());
+
   GridRedBlackCartesian *sUrbGrid = SpaceTimeGrid::makeFourDimRedBlackGrid(sUGrid);
   GridCartesian *sFGrid = SpaceTimeGrid::makeFiveDimDWFGrid(Ls, UGrid);
   GridRedBlackCartesian *sFrbGrid = SpaceTimeGrid::makeFiveDimDWFRedBlackGrid(Ls, UGrid);
@@ -175,6 +192,9 @@ int main(int argc, char **argv)
   RealD NP = UGrid->_Nprocessors;
   RealD NN = UGrid->NodeCount();
 
+  json["ranks"] = NP;
+  json["nodes"] = NN;
+
   std::cout << GridLogMessage
             << "*****************************************************************"
             << std::endl;
@@ -193,6 +213,7 @@ int main(int argc, char **argv)
             << std::endl;
   std::cout << GridLogMessage << "* VComplexF size is " << sizeof(vComplexF) << " B"
             << std::endl;
+
   if (sizeof(RealF) == 4)
     std::cout << GridLogMessage << "* SINGLE precision " << std::endl;
   if (sizeof(RealF) == 8)
@@ -208,6 +229,7 @@ int main(int argc, char **argv)
   if (WilsonKernelsStatic::Opt == WilsonKernelsStatic::OptHandUnroll)
     std::cout << GridLogMessage << "* Using Nc=3       WilsonKernels" << std::endl;
   if (WilsonKernelsStatic::Opt == WilsonKernelsStatic::OptInlineAsm)
+
     std::cout << GridLogMessage << "* Using Asm Nc=3   WilsonKernels" << std::endl;
   std::cout << GridLogMessage
             << "*****************************************************************"
@@ -249,6 +271,14 @@ int main(int argc, char **argv)
         (volume * (2 * Nd + 1) * Nd * Nc + (volume / Ls) * 2 * Nd * Nc * Nc) * simdwidth /
         nsimd * ncall / (1024. * 1024. * 1024.);
 
+    json["Dw"]["calls"] = ncall;
+    json["Dw"]["time"] = t1 - t0;
+    json["Dw"]["mflops"] = flops / (t1 - t0);
+    json["Dw"]["mflops_per_rank"] = flops / (t1 - t0) / NP;
+    json["Dw"]["mflops_per_node"] = flops / (t1 - t0) / NN;
+    json["Dw"]["RF"] = 1000000. * data_rf / ((t1 - t0));
+    json["Dw"]["mem"] = 1000000. * data_mem / ((t1 - t0));
+
     std::cout << GridLogMessage << "Called Dw " << ncall << " times in " << t1 - t0
               << " us" << std::endl;
     //    std::cout<<GridLogMessage << "norm result "<< norm2(result)<<std::endl;
@@ -258,6 +288,7 @@ int main(int argc, char **argv)
               << std::endl;
     std::cout << GridLogMessage << "mflop/s per node =  " << flops / (t1 - t0) / NN
               << std::endl;
+
     std::cout << GridLogMessage
               << "RF  GiB/s (base 2) =   " << 1000000. * data_rf / ((t1 - t0))
               << std::endl;
@@ -334,6 +365,7 @@ int main(int argc, char **argv)
   }
   //  dump=1;
   Dw.Dhop(src, result, 1);
+
   std::cout << GridLogMessage
             << "Compare to naive wilson implementation Dag to verify correctness"
             << std::endl;
@@ -366,11 +398,13 @@ int main(int argc, char **argv)
 
   // S-direction is INNERMOST and takes no part in the parity.
   std::cout << GridLogMessage
+
             << "*********************************************************" << std::endl;
   std::cout << GridLogMessage
             << "* Benchmarking DomainWallFermionF::DhopEO                " << std::endl;
   std::cout << GridLogMessage << "* Vectorising space-time by " << vComplexF::Nsimd()
             << std::endl;
+
   if (sizeof(RealF) == 4)
     std::cout << GridLogMessage << "* SINGLE precision " << std::endl;
   if (sizeof(RealF) == 8)
@@ -389,6 +423,7 @@ int main(int argc, char **argv)
     std::cout << GridLogMessage << "* Using Asm Nc=3   WilsonKernels" << std::endl;
   std::cout << GridLogMessage
             << "*********************************************************" << std::endl;
+
   {
     Dw.ZeroCounters();
     FGrid->Barrier();
@@ -414,11 +449,18 @@ int main(int argc, char **argv)
       volume = volume * latt4[mu];
     double flops = (single_site_flops * volume * ncall) / 2.0;
 
+    json["Deo"]["calls"] = ncall;
+    json["Deo"]["time"] = t1 - t0;
+    json["Deo"]["mflops"] = flops / (t1 - t0);
+    json["Deo"]["mflops_per_rank"] = flops / (t1 - t0) / NP;
+    json["Deo"]["mflops_per_node"] = flops / (t1 - t0) / NN;
+
     std::cout << GridLogMessage << "Deo mflop/s =   " << flops / (t1 - t0) << std::endl;
     std::cout << GridLogMessage << "Deo mflop/s per rank   " << flops / (t1 - t0) / NP
               << std::endl;
     std::cout << GridLogMessage << "Deo mflop/s per node   " << flops / (t1 - t0) / NN
               << std::endl;
+
     Dw.Report();
   }
   Dw.DhopEO(src_o, r_e, DaggerNo);
@@ -450,6 +492,21 @@ int main(int argc, char **argv)
 
   assert(norm2(src_e) < 1.0e-4);
   assert(norm2(src_o) < 1.0e-4);
+
+  if (!json_filename.empty())
+  {
+    std::cout << GridLogMessage << "writing benchmark results to " << json_filename
+              << std::endl;
+
+    int me = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &me);
+    if (me == 0)
+    {
+      std::ofstream json_file(json_filename);
+      json_file << std::setw(4) << json;
+    }
+  }
+
   Grid_finalize();
   exit(0);
 }
